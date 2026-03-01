@@ -36,8 +36,6 @@
   function sendMessage(text: string) {
     if (!room) return;
     socket.emit('chat-message', { roomId: room.id, text });
-    // Optimistically add own message (server will broadcast to all including us,
-    // but we mark our own copy as local immediately for instant feedback)
     messages.push({
       id: crypto.randomUUID(),
       from: user?.displayName ?? 'You',
@@ -90,8 +88,6 @@
     });
 
     socket.on('chat-message', ({ from, text, timestamp }: { from: string; text: string; timestamp: number }) => {
-      // Skip echo of own messages (we already added them optimistically in sendMessage)
-      if (from === user?.displayName) return;
       messages.push({ id: crypto.randomUUID(), from, text, timestamp, isLocal: false });
       if (!chatOpen) unreadCount += 1;
     });

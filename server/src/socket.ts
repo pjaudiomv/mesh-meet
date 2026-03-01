@@ -67,7 +67,9 @@ export function configureSocket(io: Server): void {
     socket.on('chat-message', ({ roomId, text }: { roomId: string; text: string }) => {
       const trimmed = text?.trim();
       if (!trimmed || trimmed.length > 2000 || !socket.rooms.has(roomId)) return;
-      io.to(roomId).emit('chat-message', {
+      // Use socket.to() (not io.to()) so the sender is excluded — they already
+      // see their own message via the optimistic push in sendMessage()
+      socket.to(roomId).emit('chat-message', {
         from: sessionUser.displayName,
         text: trimmed,
         timestamp: Date.now(),
