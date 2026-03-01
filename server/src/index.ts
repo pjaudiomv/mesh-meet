@@ -12,6 +12,10 @@ import { configureSocket } from './socket.js';
 const app = express();
 const httpServer = createServer(app);
 
+// Trust Railway/Heroku/etc reverse proxy so req.secure is correct
+// and session cookies with secure:true are set properly over HTTPS
+app.set('trust proxy', 1);
+
 const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 const port = parseInt(process.env.PORT ?? '3000', 10);
 const sessionSecret = process.env.SESSION_SECRET ?? 'change-me';
