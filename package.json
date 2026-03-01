@@ -13,8 +13,8 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "coverage": "vitest run --coverage",
-    "build:prod": "vite build && cd server && npm install && npm run build",
-    "start": "cd server && node dist/index.js"
+    "build:prod": "vite build && cd server && npm install",
+    "start": "cd server && npm start"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
