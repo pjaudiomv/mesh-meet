@@ -39,20 +39,20 @@ export function setAudioEnabled(v: boolean): void {
 
 export function addPeer(peer: Peer): void {
   if (!room) return;
-  room.peers.set(peer.id, peer);
+  if (room.peers.some((p) => p.id === peer.id)) return;
+  room.peers.push(peer);
 }
 
 export function removePeer(peerId: string): void {
   if (!room) return;
-  room.peers.delete(peerId);
+  const idx = room.peers.findIndex((p) => p.id === peerId);
+  if (idx !== -1) room.peers.splice(idx, 1);
 }
 
 export function updatePeerStream(peerId: string, stream: MediaStream): void {
   if (!room) return;
-  const peer = room.peers.get(peerId);
+  const peer = room.peers.find((p) => p.id === peerId);
   if (peer) {
-    // Replace the entry rather than mutating in place so Svelte's Map proxy
-    // signals a change to all derived values watching peers.values()
-    room.peers.set(peerId, { ...peer, stream });
+    peer.stream = stream;
   }
 }

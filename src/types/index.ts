@@ -14,5 +14,5 @@ export interface Peer {
 
 export interface RoomState {
   id: string;
-  peers: Map<string, Peer>;
+  peers: Peer[];
 }

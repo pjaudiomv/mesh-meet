@@ -57,7 +57,7 @@
     if (!socket.connected) {
       socket.connect();
     }
-    setRoom({ id: roomId, peers: new Map() });
+    setRoom({ id: roomId, peers: [] });
   }
 
   $effect(() => {
