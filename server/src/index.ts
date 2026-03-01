@@ -62,8 +62,11 @@ const io = new Server(httpServer, {
   },
 });
 
-// Share session with Socket.io
-io.engine.use(sessionMiddleware);
+// Share session with Socket.io via io.use() so the session is guaranteed
+// to be loaded before any io.use() auth middleware runs
+io.use((socket, next) => {
+  sessionMiddleware(socket.request as Parameters<typeof sessionMiddleware>[0], {} as Parameters<typeof sessionMiddleware>[1], next);
+});
 
 configureSocket(io);
 
