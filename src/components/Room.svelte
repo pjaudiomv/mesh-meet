@@ -2,11 +2,12 @@
   import { onMount, onDestroy } from 'svelte';
   import VideoGrid from './VideoGrid.svelte';
   import Controls from './Controls.svelte';
+  import Chat from './Chat.svelte';
   import { socket } from '@utils/socket';
   import { peerManager } from '@utils/webrtc';
   import { getRoom, setRoom, setLocalStream, getLocalStream, addPeer, removePeer } from '@/stores/room.svelte';
   import { getUser } from '@/stores/auth.svelte';
-  import type { User } from '@/types/index';
+  import type { User, ChatMessage } from '@/types/index';
 
   const room = $derived(getRoom());
   const localStream = $derived(getLocalStream());
@@ -15,12 +16,35 @@
   let socketError = $state('');
   let copied = $state(false);
 
+  let chatOpen = $state(false);
+  let messages = $state<ChatMessage[]>([]);
+  let unreadCount = $state(0);
+
   async function copyRoomId() {
     if (!room) return;
     const url = `${window.location.origin}?room=${room.id}`;
     await navigator.clipboard.writeText(url);
     copied = true;
     setTimeout(() => (copied = false), 2000);
+  }
+
+  function toggleChat() {
+    chatOpen = !chatOpen;
+    if (chatOpen) unreadCount = 0;
+  }
+
+  function sendMessage(text: string) {
+    if (!room) return;
+    socket.emit('chat-message', { roomId: room.id, text });
+    // Optimistically add own message (server will broadcast to all including us,
+    // but we mark our own copy as local immediately for instant feedback)
+    messages.push({
+      id: crypto.randomUUID(),
+      from: user?.displayName ?? 'You',
+      text,
+      timestamp: Date.now(),
+      isLocal: true
+    });
   }
 
   onMount(() => {
@@ -65,6 +89,13 @@
       peerManager.handleIceCandidate(from, candidate);
     });
 
+    socket.on('chat-message', ({ from, text, timestamp }: { from: string; text: string; timestamp: number }) => {
+      // Skip echo of own messages (we already added them optimistically in sendMessage)
+      if (from === user?.displayName) return;
+      messages.push({ id: crypto.randomUUID(), from, text, timestamp, isLocal: false });
+      if (!chatOpen) unreadCount += 1;
+    });
+
     // Get media then join — ensures peerManager has tracks before the offer is sent
     async function initAndJoin() {
       try {
@@ -104,6 +135,7 @@
     socket.off('offer');
     socket.off('answer');
     socket.off('ice-candidate');
+    socket.off('chat-message');
     peerManager.destroy();
     setLocalStream(null);
   });
@@ -146,10 +178,18 @@
     {/if}
   </div>
 
-  <div class="flex-1 overflow-hidden">
-    {#if room}
-      <VideoGrid {localStream} localName={user?.displayName ?? 'You'} peers={room.peers} />
+  <!-- Main content: video + optional chat sidebar -->
+  <div class="flex min-h-0 flex-1">
+    <div class="flex-1 overflow-hidden">
+      {#if room}
+        <VideoGrid {localStream} localName={user?.displayName ?? 'You'} peers={room.peers} />
+      {/if}
+    </div>
+
+    {#if chatOpen}
+      <Chat {messages} onSend={sendMessage} onClose={toggleChat} />
     {/if}
   </div>
-  <Controls onLeave={leaveRoom} />
+
+  <Controls onLeave={leaveRoom} onChat={toggleChat} {unreadCount} />
 </div>

@@ -16,3 +16,11 @@ export interface RoomState {
   id: string;
   peers: Peer[];
 }
+
+export interface ChatMessage {
+  id: string;
+  from: string;
+  text: string;
+  timestamp: number;
+  isLocal: boolean;
+}

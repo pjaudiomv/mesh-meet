@@ -64,6 +64,16 @@ export function configureSocket(io: Server): void {
       io.to(to).emit('ice-candidate', { from: socket.id, candidate });
     });
 
+    socket.on('chat-message', ({ roomId, text }: { roomId: string; text: string }) => {
+      const trimmed = text?.trim();
+      if (!trimmed || trimmed.length > 2000 || !socket.rooms.has(roomId)) return;
+      io.to(roomId).emit('chat-message', {
+        from: sessionUser.displayName,
+        text: trimmed,
+        timestamp: Date.now(),
+      });
+    });
+
     socket.on('disconnect', () => {
       console.log(`[socket] disconnected: ${sessionUser.displayName} (${socket.id})`);
       const roomIds = findRoomsForSocket(socket.id);
