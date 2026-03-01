@@ -51,6 +51,8 @@ export function updatePeerStream(peerId: string, stream: MediaStream): void {
   if (!room) return;
   const peer = room.peers.get(peerId);
   if (peer) {
-    peer.stream = stream;
+    // Replace the entry rather than mutating in place so Svelte's Map proxy
+    // signals a change to all derived values watching peers.values()
+    room.peers.set(peerId, { ...peer, stream });
   }
 }

@@ -5,6 +5,7 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 's
 
 export class PeerManager {
   private connections = new Map<string, RTCPeerConnection>();
+  private iceCandidateQueue = new Map<string, RTCIceCandidateInit[]>();
   private localStream: MediaStream | null = null;
 
   init(stream: MediaStream): void {
@@ -12,15 +13,13 @@ export class PeerManager {
   }
 
   addPeer(peerId: string, isInitiator: boolean): void {
+    // Don't overwrite an existing connection mid-negotiation
+    if (this.connections.has(peerId)) return;
+
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     this.connections.set(peerId, pc);
 
-    if (this.localStream) {
-      for (const track of this.localStream.getTracks()) {
-        pc.addTrack(track, this.localStream);
-      }
-    }
-
+    // Set up all handlers BEFORE adding tracks so negotiationneeded fires after
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) {
         socket.emit('ice-candidate', { to: peerId, candidate });
@@ -44,15 +43,21 @@ export class PeerManager {
         }
       };
     }
+
+    if (this.localStream) {
+      for (const track of this.localStream.getTracks()) {
+        pc.addTrack(track, this.localStream);
+      }
+    }
   }
 
   async handleOffer(peerId: string, offer: RTCSessionDescriptionInit): Promise<void> {
-    let pc = this.connections.get(peerId);
-    if (!pc) {
+    if (!this.connections.has(peerId)) {
       this.addPeer(peerId, false);
-      pc = this.connections.get(peerId)!;
     }
+    const pc = this.connections.get(peerId)!;
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    await this.flushIceCandidates(peerId);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit('answer', { to: peerId, answer: pc.localDescription });
@@ -62,12 +67,32 @@ export class PeerManager {
     const pc = this.connections.get(peerId);
     if (pc) {
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      await this.flushIceCandidates(peerId);
     }
   }
 
   async handleIceCandidate(peerId: string, candidate: RTCIceCandidateInit): Promise<void> {
     const pc = this.connections.get(peerId);
-    if (pc) {
+    if (!pc) return;
+
+    // Buffer candidates until remote description is set — adding them before
+    // setRemoteDescription throws InvalidStateError and drops the candidate
+    if (!pc.remoteDescription) {
+      const queue = this.iceCandidateQueue.get(peerId) ?? [];
+      queue.push(candidate);
+      this.iceCandidateQueue.set(peerId, queue);
+      return;
+    }
+
+    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+  }
+
+  private async flushIceCandidates(peerId: string): Promise<void> {
+    const pc = this.connections.get(peerId);
+    if (!pc) return;
+    const queue = this.iceCandidateQueue.get(peerId) ?? [];
+    this.iceCandidateQueue.delete(peerId);
+    for (const candidate of queue) {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     }
   }
@@ -77,6 +102,7 @@ export class PeerManager {
     if (pc) {
       pc.close();
       this.connections.delete(peerId);
+      this.iceCandidateQueue.delete(peerId);
     }
   }
 
@@ -85,6 +111,7 @@ export class PeerManager {
       pc.close();
     }
     this.connections.clear();
+    this.iceCandidateQueue.clear();
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) {
         track.stop();
