@@ -1,12 +1,45 @@
 <script lang="ts">
-  import { Button, Card } from 'flowbite-svelte';
+  import { Button, Card, Input, Label } from 'flowbite-svelte';
+  import { fetchUser } from '@/stores/auth.svelte';
+
+  let guestName = $state('');
+  let guestError = $state('');
+  let loading = $state(false);
+
+  async function joinAsGuest() {
+    const name = guestName.trim();
+    if (!name) {
+      guestError = 'Please enter your name';
+      return;
+    }
+    guestError = '';
+    loading = true;
+    try {
+      const res = await fetch('/api/auth/guest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ displayName: name })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        guestError = (data as { error?: string }).error ?? 'Something went wrong';
+        return;
+      }
+      await fetchUser();
+    } catch {
+      guestError = 'Network error — please try again';
+    } finally {
+      loading = false;
+    }
+  }
 </script>
 
 <div class="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
   <Card class="w-full max-w-sm p-6">
     <div class="mb-6 text-center">
       <h1 class="mb-2 text-2xl font-bold text-gray-900 dark:text-white">MeshMeet</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400">Sign in to start or join a video call</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400">Sign in or join as a guest</p>
     </div>
 
     <div class="flex flex-col gap-3">
@@ -30,6 +63,27 @@
         </svg>
         Sign in with GitHub
       </Button>
+
+      <div class="relative my-1 flex items-center">
+        <div class="flex-1 border-t border-gray-200 dark:border-gray-700"></div>
+        <span class="mx-3 text-xs text-gray-400">or</span>
+        <div class="flex-1 border-t border-gray-200 dark:border-gray-700"></div>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <Label for="guest-name" class="text-sm">Continue as guest</Label>
+        <Input id="guest-name" bind:value={guestName} placeholder="Your name" onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && joinAsGuest()} disabled={loading} />
+        {#if guestError}
+          <p class="text-xs text-red-500">{guestError}</p>
+        {/if}
+        <Button color="green" class="w-full" onclick={joinAsGuest} disabled={loading}>
+          {#if loading}
+            Joining…
+          {:else}
+            Join as Guest
+          {/if}
+        </Button>
+      </div>
     </div>
   </Card>
 </div>

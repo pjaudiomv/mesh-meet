@@ -1,6 +1,7 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as GitHubStrategy } from 'passport-github2';
+import { v4 as uuidv4 } from 'uuid';
 import type { Express } from 'express';
 
 interface SessionUser {
@@ -106,6 +107,27 @@ export function configurePassport(app: Express): void {
   } else {
     app.get('/auth/github', (_req, res) => res.status(501).json({ error: 'GitHub OAuth not configured' }));
   }
+
+  // Guest login — no OAuth required, just a display name
+  app.post('/api/auth/guest', (req, res) => {
+    const displayName = (req.body?.displayName as string | undefined)?.trim();
+    if (!displayName) {
+      res.status(400).json({ error: 'Display name is required' });
+      return;
+    }
+    const guestUser: SessionUser = {
+      id: `guest_${uuidv4()}`,
+      displayName,
+      provider: 'guest',
+    };
+    req.login(guestUser, (err) => {
+      if (err) {
+        res.status(500).json({ error: 'Login failed' });
+        return;
+      }
+      res.json(guestUser);
+    });
+  });
 
   // API routes
   app.get('/api/auth/me', (req, res) => {
