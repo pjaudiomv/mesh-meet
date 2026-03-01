@@ -5,9 +5,12 @@ import { joinRoom, leaveRoom, getRoomParticipants, findRoomsForSocket } from './
 export function configureSocket(io: Server): void {
   io.use((socket, next) => {
     const req = socket.request as SessionRequest;
-    if (req.session?.user) {
+    const user = req.session?.user;
+    if (user) {
+      console.log(`[socket] auth OK: ${user.displayName} (${socket.id})`);
       next();
     } else {
+      console.warn(`[socket] auth FAILED: no session.user — session keys: ${Object.keys(req.session ?? {}).join(', ')}`);
       next(new Error('Unauthorized'));
     }
   });
@@ -15,6 +18,7 @@ export function configureSocket(io: Server): void {
   io.on('connection', (socket) => {
     const req = socket.request as SessionRequest;
     const sessionUser = req.session.user;
+    console.log(`[socket] connected: ${sessionUser.displayName} (${socket.id})`);
 
     socket.on('join-room', (roomId: string) => {
       joinRoom(roomId, {
@@ -29,6 +33,8 @@ export function configureSocket(io: Server): void {
         .filter((p) => p.socketId !== socket.id)
         .map((p) => ({ id: p.socketId, displayName: p.displayName }));
 
+      console.log(`[socket] ${sessionUser.displayName} joined room ${roomId} — existing peers: [${participants.map((p) => p.displayName).join(', ')}]`);
+
       socket.emit('room-joined', { roomId, peers: participants });
 
       socket.to(roomId).emit('peer-joined', {
@@ -41,13 +47,16 @@ export function configureSocket(io: Server): void {
       leaveRoom(roomId, socket.id);
       socket.leave(roomId);
       socket.to(roomId).emit('peer-left', { id: socket.id });
+      console.log(`[socket] ${sessionUser.displayName} left room ${roomId}`);
     });
 
     socket.on('offer', ({ to, offer }: { to: string; offer: RTCSessionDescriptionInit }) => {
+      console.log(`[socket] offer: ${socket.id} → ${to}`);
       io.to(to).emit('offer', { from: socket.id, offer });
     });
 
     socket.on('answer', ({ to, answer }: { to: string; answer: RTCSessionDescriptionInit }) => {
+      console.log(`[socket] answer: ${socket.id} → ${to}`);
       io.to(to).emit('answer', { from: socket.id, answer });
     });
 
@@ -56,6 +65,7 @@ export function configureSocket(io: Server): void {
     });
 
     socket.on('disconnect', () => {
+      console.log(`[socket] disconnected: ${sessionUser.displayName} (${socket.id})`);
       const roomIds = findRoomsForSocket(socket.id);
       for (const roomId of roomIds) {
         leaveRoom(roomId, socket.id);

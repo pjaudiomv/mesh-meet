@@ -62,11 +62,9 @@ const io = new Server(httpServer, {
   },
 });
 
-// Share session with Socket.io via io.use() so the session is guaranteed
-// to be loaded before any io.use() auth middleware runs
-io.use((socket, next) => {
-  sessionMiddleware(socket.request as Parameters<typeof sessionMiddleware>[0], {} as Parameters<typeof sessionMiddleware>[1], next);
-});
+// Share session with Socket.io — io.engine.use passes real req/res objects
+// so express-session's on-finished listener works correctly
+io.engine.use(sessionMiddleware);
 
 configureSocket(io);
 

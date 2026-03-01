@@ -25,11 +25,14 @@
 
   onMount(() => {
     // Register listeners FIRST — before any async work so no events are missed
+    socket.on('connect', () => console.log('[room] socket connected', socket.id));
     socket.on('connect_error', (err) => {
+      console.error('[room] socket connect_error:', err.message);
       socketError = `Connection error: ${err.message}`;
     });
 
     socket.on('room-joined', ({ peers }: { roomId: string; peers: { id: string; displayName: string }[] }) => {
+      console.log('[room] room-joined, existing peers:', peers);
       for (const peer of peers) {
         addPeer({ id: peer.id, stream: null, displayName: peer.displayName, muted: false });
         peerManager.addPeer(peer.id, true);
@@ -37,20 +40,24 @@
     });
 
     socket.on('peer-joined', ({ id, displayName }: { id: string; displayName: string }) => {
+      console.log('[room] peer-joined:', displayName, id);
       addPeer({ id, stream: null, displayName, muted: false });
       peerManager.addPeer(id, false);
     });
 
     socket.on('peer-left', ({ id }: { id: string }) => {
+      console.log('[room] peer-left:', id);
       removePeer(id);
       peerManager.removePeer(id);
     });
 
     socket.on('offer', ({ from, offer }: { from: string; offer: RTCSessionDescriptionInit }) => {
+      console.log('[room] received offer from', from);
       peerManager.handleOffer(from, offer);
     });
 
     socket.on('answer', ({ from, answer }: { from: string; answer: RTCSessionDescriptionInit }) => {
+      console.log('[room] received answer from', from);
       peerManager.handleAnswer(from, answer);
     });
 
@@ -64,11 +71,13 @@
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         setLocalStream(stream);
         peerManager.init(stream);
+        console.log('[room] got local media');
       } catch (err) {
-        console.error('Failed to get user media:', err);
+        console.error('[room] getUserMedia failed:', err);
       }
 
       if (!room) return;
+      console.log('[room] joining room', room.id, '— socket connected:', socket.connected);
 
       if (socket.connected) {
         socket.emit('join-room', room.id);
@@ -87,6 +96,7 @@
     if (room) {
       socket.emit('leave-room', room.id);
     }
+    socket.off('connect');
     socket.off('connect_error');
     socket.off('room-joined');
     socket.off('peer-joined');
