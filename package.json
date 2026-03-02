@@ -6,14 +6,14 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --host",
     "lint": "prettier --check vite.config.ts tsconfig.json src && eslint vite.config.ts src && svelte-check --tsconfig ./tsconfig.json",
     "format": "prettier --write vite.config.ts src",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "coverage": "vitest run --coverage",
-    "start": "vite preview"
+    "start": "vite preview --host"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
