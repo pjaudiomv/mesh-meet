@@ -13,9 +13,7 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "coverage": "vitest run --coverage",
-    "postinstall": "cd server && npm install",
-    "build:prod": "vite build",
-    "start": "cd server && npm start"
+    "start": "vite preview"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -47,7 +45,7 @@
   },
   "dependencies": {
     "globals": "^17.3.0",
-    "socket.io-client": "^4.8.1",
+    "@supabase/supabase-js": "^2.49.4",
     "uuid": "^11.1.0"
   }
 }

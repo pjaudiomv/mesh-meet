@@ -33,9 +33,9 @@
   }
 </script>
 
-<div class="flex w-80 shrink-0 flex-col border-l border-gray-700 bg-gray-800">
+<div class="flex h-full w-full flex-col border-l border-gray-700 bg-gray-800">
   <!-- Header -->
-  <div class="flex items-center justify-between border-b border-gray-700 px-4 py-3">
+  <div class="flex shrink-0 items-center justify-between border-b border-gray-700 px-4 py-3">
     <span class="font-semibold text-white">Chat</span>
     <button onclick={onClose} class="rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white" title="Close chat">
       <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -44,8 +44,8 @@
     </button>
   </div>
 
-  <!-- Messages -->
-  <div bind:this={listEl} class="flex-1 space-y-3 overflow-y-auto p-3">
+  <!-- Messages: min-h-0 lets flex-1 shrink so overflow-y-auto actually scrolls -->
+  <div bind:this={listEl} class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
     {#if messages.length === 0}
       <p class="mt-8 text-center text-sm text-gray-500">No messages yet. Say hello!</p>
     {/if}
@@ -65,7 +65,7 @@
   </div>
 
   <!-- Input -->
-  <div class="border-t border-gray-700 p-3">
+  <div class="pb-safe shrink-0 border-t border-gray-700 p-3">
     <div class="flex gap-2">
       <input
         bind:value={text}

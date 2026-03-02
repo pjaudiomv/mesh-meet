@@ -17,8 +17,9 @@
 
   const gridClass = $derived.by(() => {
     if (totalCount === 1) return 'grid-cols-1';
+    if (totalCount === 2) return 'grid-cols-1 sm:grid-cols-2';
     if (totalCount <= 4) return 'grid-cols-2';
-    return 'grid-cols-3';
+    return 'grid-cols-2 sm:grid-cols-3';
   });
 
   function togglePin(id: string) {
@@ -58,11 +59,11 @@
     </div>
   </div>
 {:else}
-  <!-- Grid layout -->
-  <div class="grid h-full gap-2 p-2 {gridClass}">
-    <VideoTile stream={localStream} displayName={localName} isLocal={true} onclick={() => togglePin('local')} />
+  <!-- Grid layout: rows share height equally so tiles fill the container -->
+  <div class="grid h-full gap-2 p-2 {gridClass}" style="grid-auto-rows: 1fr;">
+    <VideoTile stream={localStream} displayName={localName} isLocal={true} fill={true} onclick={() => togglePin('local')} />
     {#each peers as peer (peer.id)}
-      <VideoTile stream={peer.stream} displayName={peer.displayName} muted={peer.muted} onclick={() => togglePin(peer.id)} />
+      <VideoTile stream={peer.stream} displayName={peer.displayName} muted={peer.muted} fill={true} onclick={() => togglePin(peer.id)} />
     {/each}
   </div>
 {/if}

@@ -1,35 +1,38 @@
-import { socket } from './socket';
 import { updatePeerStream } from '@/stores/room.svelte';
 
 const ICE_SERVERS: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+
+export interface Signaling {
+  sendOffer(to: string, offer: RTCSessionDescriptionInit): void;
+  sendAnswer(to: string, answer: RTCSessionDescriptionInit): void;
+  sendIceCandidate(to: string, candidate: RTCIceCandidateInit): void;
+}
 
 export class PeerManager {
   private connections = new Map<string, RTCPeerConnection>();
   private iceCandidateQueue = new Map<string, RTCIceCandidateInit[]>();
   private localStream: MediaStream | null = null;
+  private signaling: Signaling | null = null;
 
-  init(stream: MediaStream): void {
+  init(stream: MediaStream, signaling: Signaling): void {
     this.localStream = stream;
+    this.signaling = signaling;
   }
 
   addPeer(peerId: string, isInitiator: boolean): void {
-    // Don't overwrite an existing connection mid-negotiation
     if (this.connections.has(peerId)) return;
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     this.connections.set(peerId, pc);
 
-    // Set up all handlers BEFORE adding tracks so negotiationneeded fires after
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) {
-        socket.emit('ice-candidate', { to: peerId, candidate });
+        this.signaling?.sendIceCandidate(peerId, candidate.toJSON());
       }
     };
 
     pc.ontrack = ({ streams }) => {
-      if (streams[0]) {
-        updatePeerStream(peerId, streams[0]);
-      }
+      if (streams[0]) updatePeerStream(peerId, streams[0]);
     };
 
     if (isInitiator) {
@@ -37,9 +40,9 @@ export class PeerManager {
         try {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          socket.emit('offer', { to: peerId, offer: pc.localDescription });
+          if (pc.localDescription) this.signaling?.sendOffer(peerId, pc.localDescription);
         } catch (err) {
-          console.error('Error creating offer:', err);
+          console.error('[webrtc] Error creating offer:', err);
         }
       };
     }
@@ -60,7 +63,7 @@ export class PeerManager {
     await this.flushIceCandidates(peerId);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    socket.emit('answer', { to: peerId, answer: pc.localDescription });
+    if (pc.localDescription) this.signaling?.sendAnswer(peerId, pc.localDescription);
   }
 
   async handleAnswer(peerId: string, answer: RTCSessionDescriptionInit): Promise<void> {
@@ -75,8 +78,6 @@ export class PeerManager {
     const pc = this.connections.get(peerId);
     if (!pc) return;
 
-    // Buffer candidates until remote description is set — adding them before
-    // setRemoteDescription throws InvalidStateError and drops the candidate
     if (!pc.remoteDescription) {
       const queue = this.iceCandidateQueue.get(peerId) ?? [];
       queue.push(candidate);
@@ -95,6 +96,19 @@ export class PeerManager {
     for (const candidate of queue) {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     }
+  }
+
+  /** Swap a single track in all active peer connections without renegotiation. */
+  replaceTrack(kind: 'audio' | 'video', newTrack: MediaStreamTrack): void {
+    for (const pc of this.connections.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.kind === kind);
+      sender?.replaceTrack(newTrack).catch((err) => console.error('[webrtc] replaceTrack failed:', err));
+    }
+  }
+
+  /** Update the stored local stream reference (used when device changes). */
+  updateStream(stream: MediaStream): void {
+    this.localStream = stream;
   }
 
   removePeer(peerId: string): void {
@@ -118,6 +132,7 @@ export class PeerManager {
       }
       this.localStream = null;
     }
+    this.signaling = null;
   }
 }
 

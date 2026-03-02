@@ -1,24 +1,28 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import type { RealtimeChannel } from '@supabase/supabase-js';
   import VideoGrid from './VideoGrid.svelte';
   import Controls from './Controls.svelte';
   import Chat from './Chat.svelte';
-  import { socket } from '@utils/socket';
+  import { supabase } from '@utils/supabase';
   import { peerManager } from '@utils/webrtc';
   import { getRoom, setRoom, setLocalStream, getLocalStream, addPeer, removePeer } from '@/stores/room.svelte';
-  import { getDisplayName } from '@/stores/auth.svelte';
+  import { getDisplayName, getPeerId } from '@/stores/auth.svelte';
   import type { ChatMessage } from '@/types/index';
 
   const room = $derived(getRoom());
   const localStream = $derived(getLocalStream());
   const displayName = $derived(getDisplayName() ?? 'You');
+  const myPeerId = $derived(getPeerId() ?? '');
 
-  let socketError = $state('');
   let copied = $state(false);
-
   let chatOpen = $state(false);
   let messages = $state<ChatMessage[]>([]);
   let unreadCount = $state(0);
+
+  let channel: RealtimeChannel | null = null;
+  // Track which peer IDs we've already set up connections for
+  let knownPeers = new Set<string>();
 
   async function copyRoomId() {
     if (!room) return;
@@ -34,119 +38,135 @@
   }
 
   function sendMessage(text: string) {
-    if (!room) return;
-    socket.emit('chat-message', { roomId: room.id, text });
-    messages.push({
-      id: crypto.randomUUID(),
-      from: displayName,
-      text,
-      timestamp: Date.now(),
-      isLocal: true
-    });
+    if (!channel) return;
+    channel.send({ type: 'broadcast', event: 'chat', payload: { from: displayName, text, timestamp: Date.now() } });
+    messages.push({ id: crypto.randomUUID(), from: displayName, text, timestamp: Date.now(), isLocal: true });
   }
 
   onMount(() => {
-    socket.on('connect', () => console.log('[room] socket connected', socket.id));
-    socket.on('connect_error', (err) => {
-      console.error('[room] socket connect_error:', err.message);
-      socketError = `Connection error: ${err.message}`;
-    });
+    const currentRoom = getRoom();
+    if (!currentRoom) return;
 
-    socket.on('room-error', ({ code, message }: { code: string; message: string }) => {
-      console.warn('[room] room-error:', code, message);
-      socketError = message;
-      if (code === 'ROOM_EXPIRED') {
-        setTimeout(() => setRoom(null), 3000);
+    // Signaling callbacks wired to Supabase Broadcast
+    const signaling = {
+      sendOffer: (to: string, offer: RTCSessionDescriptionInit) => channel?.send({ type: 'broadcast', event: 'offer', payload: { to, from: myPeerId, offer } }),
+      sendAnswer: (to: string, answer: RTCSessionDescriptionInit) => channel?.send({ type: 'broadcast', event: 'answer', payload: { to, from: myPeerId, answer } }),
+      sendIceCandidate: (to: string, candidate: RTCIceCandidateInit) => channel?.send({ type: 'broadcast', event: 'ice', payload: { to, from: myPeerId, candidate } })
+    };
+
+    channel = supabase.channel(`room:${currentRoom.id}`, {
+      config: {
+        broadcast: { self: false },
+        presence: { key: myPeerId }
       }
     });
 
-    socket.on('room-joined', ({ peers }: { roomId: string; peers: { id: string; displayName: string }[] }) => {
-      console.log('[room] room-joined, existing peers:', peers);
-      for (const peer of peers) {
-        addPeer({ id: peer.id, stream: null, displayName: peer.displayName, muted: false });
-        peerManager.addPeer(peer.id, true);
-      }
-    });
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        if (!channel) return;
+        const state = channel.presenceState<{ displayName: string }>();
+        const currentIds = new Set(Object.keys(state).filter((k) => k !== myPeerId));
 
-    socket.on('peer-joined', ({ id, displayName: peerName }: { id: string; displayName: string }) => {
-      console.log('[room] peer-joined:', peerName, id);
-      addPeer({ id, stream: null, displayName: peerName, muted: false });
-      peerManager.addPeer(id, false);
-    });
+        // New peers since last sync
+        for (const [id, presences] of Object.entries(state)) {
+          if (id === myPeerId || knownPeers.has(id)) continue;
+          const name = presences[0].displayName;
+          console.log('[room] peer joined:', name, id);
+          addPeer({ id, stream: null, displayName: name, muted: false });
+          // Lexicographically smaller peer ID is the initiator — deterministic, no server needed
+          peerManager.addPeer(id, myPeerId < id);
+        }
 
-    socket.on('peer-left', ({ id }: { id: string }) => {
-      console.log('[room] peer-left:', id);
-      removePeer(id);
-      peerManager.removePeer(id);
-    });
+        // Peers that left
+        for (const id of knownPeers) {
+          if (!currentIds.has(id)) {
+            console.log('[room] peer left:', id);
+            removePeer(id);
+            peerManager.removePeer(id);
+          }
+        }
 
-    socket.on('offer', ({ from, offer }: { from: string; offer: RTCSessionDescriptionInit }) => {
-      console.log('[room] received offer from', from);
-      peerManager.handleOffer(from, offer);
-    });
-
-    socket.on('answer', ({ from, answer }: { from: string; answer: RTCSessionDescriptionInit }) => {
-      console.log('[room] received answer from', from);
-      peerManager.handleAnswer(from, answer);
-    });
-
-    socket.on('ice-candidate', ({ from, candidate }: { from: string; candidate: RTCIceCandidateInit }) => {
-      peerManager.handleIceCandidate(from, candidate);
-    });
-
-    socket.on('chat-message', ({ from, text, timestamp }: { from: string; text: string; timestamp: number }) => {
-      messages.push({ id: crypto.randomUUID(), from, text, timestamp, isLocal: false });
-      if (!chatOpen) unreadCount += 1;
-    });
+        knownPeers = currentIds;
+      })
+      .on('broadcast', { event: 'offer' }, ({ payload }) => {
+        if (payload.to !== myPeerId) return;
+        console.log('[room] received offer from', payload.from);
+        peerManager.handleOffer(payload.from, payload.offer);
+      })
+      .on('broadcast', { event: 'answer' }, ({ payload }) => {
+        if (payload.to !== myPeerId) return;
+        console.log('[room] received answer from', payload.from);
+        peerManager.handleAnswer(payload.from, payload.answer);
+      })
+      .on('broadcast', { event: 'ice' }, ({ payload }) => {
+        if (payload.to !== myPeerId) return;
+        peerManager.handleIceCandidate(payload.from, payload.candidate);
+      })
+      .on('broadcast', { event: 'chat' }, ({ payload }: { payload: { from: string; text: string; timestamp: number } }) => {
+        messages.push({ id: crypto.randomUUID(), from: payload.from, text: payload.text, timestamp: payload.timestamp, isLocal: false });
+        if (!chatOpen) unreadCount += 1;
+      });
 
     async function initAndJoin() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         setLocalStream(stream);
-        peerManager.init(stream);
+        peerManager.init(stream, signaling);
         console.log('[room] got local media');
       } catch (err) {
         console.error('[room] getUserMedia failed:', err);
       }
 
-      if (!room) return;
-      console.log('[room] joining room', room.id, '— socket connected:', socket.connected);
-
-      if (socket.connected) {
-        socket.emit('join-room', room.id);
-      } else {
-        socket.auth = { displayName };
-        socket.once('connect', () => {
-          if (room) socket.emit('join-room', room.id);
+      await new Promise<void>((resolve) => {
+        channel!.subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await channel!.track({ displayName });
+            console.log('[room] subscribed to channel, presence tracked');
+            resolve();
+          }
         });
-        if (!socket.active) socket.connect();
-      }
+      });
     }
 
     initAndJoin();
   });
 
   onDestroy(() => {
-    if (room) {
-      socket.emit('leave-room', room.id);
+    if (channel) {
+      channel.untrack();
+      supabase.removeChannel(channel);
+      channel = null;
     }
-    socket.off('connect');
-    socket.off('connect_error');
-    socket.off('room-error');
-    socket.off('room-joined');
-    socket.off('peer-joined');
-    socket.off('peer-left');
-    socket.off('offer');
-    socket.off('answer');
-    socket.off('ice-candidate');
-    socket.off('chat-message');
     peerManager.destroy();
     setLocalStream(null);
   });
 
+  async function handleChangeDevice(kind: 'audio' | 'video', deviceId: string) {
+    const currentStream = getLocalStream();
+    if (!currentStream) return;
+    try {
+      const constraints = kind === 'audio' ? { audio: { deviceId: { exact: deviceId } }, video: false } : { audio: false, video: { deviceId: { exact: deviceId } } };
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const newTrack = kind === 'audio' ? newStream.getAudioTracks()[0] : newStream.getVideoTracks()[0];
+      // Swap track in all active peer connections without renegotiation
+      peerManager.replaceTrack(kind, newTrack);
+      // Build updated stream for local preview (keep the other kind's track)
+      const otherTracks = kind === 'audio' ? currentStream.getVideoTracks() : currentStream.getAudioTracks();
+      const updatedStream = new MediaStream([...otherTracks, newTrack]);
+      // Stop old track to release hardware
+      (kind === 'audio' ? currentStream.getAudioTracks() : currentStream.getVideoTracks()).forEach((t) => t.stop());
+      setLocalStream(updatedStream);
+      peerManager.updateStream(updatedStream);
+    } catch (err) {
+      console.error('[room] Failed to change device:', err);
+    }
+  }
+
   function leaveRoom() {
-    if (room) {
-      socket.emit('leave-room', room.id);
+    if (channel) {
+      channel.untrack();
+      supabase.removeChannel(channel);
+      channel = null;
     }
     peerManager.destroy();
     setLocalStream(null);
@@ -154,7 +174,7 @@
   }
 </script>
 
-<div class="flex h-screen flex-col bg-gray-900">
+<div class="flex h-dvh flex-col bg-gray-900">
   <!-- Header bar with room ID -->
   <div class="flex items-center justify-between bg-gray-800 px-4 py-2">
     <span class="text-sm text-gray-400">Room:</span>
@@ -177,23 +197,24 @@
         {/if}
       </button>
     </div>
-    {#if socketError}
-      <span class="text-xs text-red-400">{socketError}</span>
-    {/if}
   </div>
 
-  <!-- Main content: video + optional chat sidebar -->
-  <div class="flex min-h-0 flex-1">
-    <div class="flex-1 overflow-hidden">
+  <!-- Main content: video + optional chat -->
+  <div class="flex min-h-0 flex-1 overflow-hidden">
+    <!-- Video: hidden on mobile when chat is open so chat can fill the space -->
+    <div class="h-full flex-1 overflow-hidden {chatOpen ? 'hidden sm:block' : ''}">
       {#if room}
         <VideoGrid {localStream} localName={displayName} peers={room.peers} />
       {/if}
     </div>
 
     {#if chatOpen}
-      <Chat {messages} onSend={sendMessage} onClose={toggleChat} />
+      <!-- Mobile: fills full area. sm+: fixed-width sidebar alongside video -->
+      <div class="flex h-full w-full flex-col sm:w-80 sm:flex-none sm:shrink-0">
+        <Chat {messages} onSend={sendMessage} onClose={toggleChat} />
+      </div>
     {/if}
   </div>
 
-  <Controls onLeave={leaveRoom} onChat={toggleChat} {unreadCount} />
+  <Controls onLeave={leaveRoom} onChat={toggleChat} {unreadCount} onChangeMic={(id) => handleChangeDevice('audio', id)} onChangeCamera={(id) => handleChangeDevice('video', id)} />
 </div>

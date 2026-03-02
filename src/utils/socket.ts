@@ -1,6 +1,2 @@
-import { io } from 'socket.io-client';
-
-export const socket = io({
-  withCredentials: true,
-  autoConnect: false
-});
+// Signaling is now handled by Supabase Realtime — see src/utils/supabase.ts
+export {};

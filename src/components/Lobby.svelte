@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Button, Card, Input, Label } from 'flowbite-svelte';
   import { v4 as uuidv4 } from 'uuid';
-  import { socket } from '@utils/socket';
   import { setRoom } from '@/stores/room.svelte';
   import { getDisplayName, setDisplayName } from '@/stores/auth.svelte';
 
@@ -53,10 +52,6 @@
   }
 
   function enterRoom(roomId: string) {
-    if (!socket.connected) {
-      socket.auth = { displayName };
-      socket.connect();
-    }
     setRoom({ id: roomId, peers: [] });
   }
 
