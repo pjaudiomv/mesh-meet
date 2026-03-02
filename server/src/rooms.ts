@@ -1,25 +1,20 @@
-import { v4 as uuidv4 } from 'uuid';
-
 interface RoomParticipant {
   socketId: string;
-  userId: string;
   displayName: string;
 }
 
 const rooms = new Map<string, Map<string, RoomParticipant>>();
 
-export function createRoom(): string {
-  const roomId = uuidv4();
-  rooms.set(roomId, new Map());
-  return roomId;
-}
+// Rooms that once had participants but are now empty are "expired".
+// New joins to an expired room are rejected so the meeting link becomes invalid.
+const expiredRooms = new Set<string>();
 
 export function joinRoom(roomId: string, participant: RoomParticipant): boolean {
+  if (expiredRooms.has(roomId)) return false;
   if (!rooms.has(roomId)) {
     rooms.set(roomId, new Map());
   }
-  const room = rooms.get(roomId)!;
-  room.set(participant.socketId, participant);
+  rooms.get(roomId)!.set(participant.socketId, participant);
   return true;
 }
 
@@ -29,11 +24,12 @@ export function leaveRoom(roomId: string, socketId: string): void {
   room.delete(socketId);
   if (room.size === 0) {
     rooms.delete(roomId);
+    expiredRooms.add(roomId);
   }
 }
 
-export function getRoom(roomId: string): Map<string, RoomParticipant> | undefined {
-  return rooms.get(roomId);
+export function isRoomExpired(roomId: string): boolean {
+  return expiredRooms.has(roomId);
 }
 
 export function getRoomParticipants(roomId: string): RoomParticipant[] {
@@ -45,9 +41,7 @@ export function getRoomParticipants(roomId: string): RoomParticipant[] {
 export function findRoomsForSocket(socketId: string): string[] {
   const result: string[] = [];
   for (const [roomId, room] of rooms) {
-    if (room.has(socketId)) {
-      result.push(roomId);
-    }
+    if (room.has(socketId)) result.push(roomId);
   }
   return result;
 }

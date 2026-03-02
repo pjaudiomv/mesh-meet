@@ -3,19 +3,19 @@
   import { v4 as uuidv4 } from 'uuid';
   import { socket } from '@utils/socket';
   import { setRoom } from '@/stores/room.svelte';
-  import { getUser } from '@/stores/auth.svelte';
-  import type { User } from '@/types/index';
+  import { getDisplayName, setDisplayName } from '@/stores/auth.svelte';
 
   let joinRoomId = $state('');
-  let pendingRoomId = $state(''); // generated but not yet entered
+  let pendingRoomId = $state('');
   let pendingRoomUrl = $state('');
   let copied = $state(false);
   let error = $state('');
 
-  const user = $derived(getUser() as User);
+  const displayName = $derived(getDisplayName() ?? '');
 
-  function handleLogout() {
-    window.location.href = '/api/auth/logout';
+  function handleSignOut() {
+    setDisplayName('');
+    setRoom(null);
   }
 
   function generateRoom() {
@@ -37,7 +37,6 @@
 
   function joinRoom() {
     let id = joinRoomId.trim();
-    // Accept full URLs — extract the ?room= param if present
     try {
       const url = new URL(id);
       const param = url.searchParams.get('room');
@@ -55,6 +54,7 @@
 
   function enterRoom(roomId: string) {
     if (!socket.connected) {
+      socket.auth = { displayName };
       socket.connect();
     }
     setRoom({ id: roomId, peers: [] });
@@ -74,9 +74,9 @@
     <div class="mb-6 flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">MeshMeet</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400">Welcome, {user?.displayName}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Welcome, {displayName}</p>
       </div>
-      <Button color="light" size="sm" onclick={handleLogout}>Sign out</Button>
+      <Button color="light" size="sm" onclick={handleSignOut}>Change name</Button>
     </div>
 
     <Card class="mb-4 p-6">
@@ -91,7 +91,7 @@
         </Button>
       {:else}
         <div class="mb-4 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-          <p class="mb-2 text-xs font-semibold text-blue-700 dark:text-blue-300">Share this link with others:</p>
+          <p class="mb-2 text-xs font-semibold text-blue-700 dark:text-blue-300">Share this link — no login required:</p>
           <div class="mb-2 flex items-center gap-2">
             <p class="min-w-0 flex-1 font-mono text-xs break-all text-blue-600 dark:text-blue-400">{pendingRoomUrl}</p>
             <button onclick={copyUrl} class="shrink-0 rounded p-1.5 text-blue-600 transition hover:bg-blue-100 dark:text-blue-400 dark:hover:bg-blue-800" title="Copy link">

@@ -1,53 +1,46 @@
 import type { Server } from 'socket.io';
-import type { SessionRequest } from './types.js';
-import { joinRoom, leaveRoom, getRoomParticipants, findRoomsForSocket } from './rooms.js';
+import { joinRoom, leaveRoom, getRoomParticipants, findRoomsForSocket, isRoomExpired } from './rooms.js';
 
 export function configureSocket(io: Server): void {
+  // Auth: require a display name passed in socket handshake auth
   io.use((socket, next) => {
-    const req = socket.request as SessionRequest;
-    const user = req.session?.user;
-    if (user) {
-      console.log(`[socket] auth OK: ${user.displayName} (${socket.id})`);
-      next();
-    } else {
-      console.warn(`[socket] auth FAILED: no session.user — session keys: ${Object.keys(req.session ?? {}).join(', ')}`);
-      next(new Error('Unauthorized'));
+    const displayName = (socket.handshake.auth.displayName as string)?.trim();
+    if (!displayName) {
+      return next(new Error('Display name is required'));
     }
+    socket.data.displayName = displayName;
+    next();
   });
 
   io.on('connection', (socket) => {
-    const req = socket.request as SessionRequest;
-    const sessionUser = req.session.user;
-    console.log(`[socket] connected: ${sessionUser.displayName} (${socket.id})`);
+    const displayName = socket.data.displayName as string;
+    console.log(`[socket] connected: ${displayName} (${socket.id})`);
 
     socket.on('join-room', (roomId: string) => {
-      joinRoom(roomId, {
-        socketId: socket.id,
-        userId: sessionUser.id,
-        displayName: sessionUser.displayName,
-      });
+      if (isRoomExpired(roomId)) {
+        socket.emit('room-error', { code: 'ROOM_EXPIRED', message: 'This meeting has ended.' });
+        console.log(`[socket] ${displayName} tried to join expired room ${roomId}`);
+        return;
+      }
 
+      joinRoom(roomId, { socketId: socket.id, displayName });
       socket.join(roomId);
 
       const participants = getRoomParticipants(roomId)
         .filter((p) => p.socketId !== socket.id)
         .map((p) => ({ id: p.socketId, displayName: p.displayName }));
 
-      console.log(`[socket] ${sessionUser.displayName} joined room ${roomId} — existing peers: [${participants.map((p) => p.displayName).join(', ')}]`);
+      console.log(`[socket] ${displayName} joined room ${roomId} — existing peers: [${participants.map((p) => p.displayName).join(', ')}]`);
 
       socket.emit('room-joined', { roomId, peers: participants });
-
-      socket.to(roomId).emit('peer-joined', {
-        id: socket.id,
-        displayName: sessionUser.displayName,
-      });
+      socket.to(roomId).emit('peer-joined', { id: socket.id, displayName });
     });
 
     socket.on('leave-room', (roomId: string) => {
       leaveRoom(roomId, socket.id);
       socket.leave(roomId);
       socket.to(roomId).emit('peer-left', { id: socket.id });
-      console.log(`[socket] ${sessionUser.displayName} left room ${roomId}`);
+      console.log(`[socket] ${displayName} left room ${roomId}`);
     });
 
     socket.on('offer', ({ to, offer }: { to: string; offer: RTCSessionDescriptionInit }) => {
@@ -67,17 +60,15 @@ export function configureSocket(io: Server): void {
     socket.on('chat-message', ({ roomId, text }: { roomId: string; text: string }) => {
       const trimmed = text?.trim();
       if (!trimmed || trimmed.length > 2000 || !socket.rooms.has(roomId)) return;
-      // Use socket.to() (not io.to()) so the sender is excluded — they already
-      // see their own message via the optimistic push in sendMessage()
       socket.to(roomId).emit('chat-message', {
-        from: sessionUser.displayName,
+        from: displayName,
         text: trimmed,
         timestamp: Date.now(),
       });
     });
 
     socket.on('disconnect', () => {
-      console.log(`[socket] disconnected: ${sessionUser.displayName} (${socket.id})`);
+      console.log(`[socket] disconnected: ${displayName} (${socket.id})`);
       const roomIds = findRoomsForSocket(socket.id);
       for (const roomId of roomIds) {
         leaveRoom(roomId, socket.id);

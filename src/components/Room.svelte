@@ -6,12 +6,12 @@
   import { socket } from '@utils/socket';
   import { peerManager } from '@utils/webrtc';
   import { getRoom, setRoom, setLocalStream, getLocalStream, addPeer, removePeer } from '@/stores/room.svelte';
-  import { getUser } from '@/stores/auth.svelte';
-  import type { User, ChatMessage } from '@/types/index';
+  import { getDisplayName } from '@/stores/auth.svelte';
+  import type { ChatMessage } from '@/types/index';
 
   const room = $derived(getRoom());
   const localStream = $derived(getLocalStream());
-  const user = $derived(getUser() as User);
+  const displayName = $derived(getDisplayName() ?? 'You');
 
   let socketError = $state('');
   let copied = $state(false);
@@ -38,7 +38,7 @@
     socket.emit('chat-message', { roomId: room.id, text });
     messages.push({
       id: crypto.randomUUID(),
-      from: user?.displayName ?? 'You',
+      from: displayName,
       text,
       timestamp: Date.now(),
       isLocal: true
@@ -46,11 +46,18 @@
   }
 
   onMount(() => {
-    // Register listeners FIRST — before any async work so no events are missed
     socket.on('connect', () => console.log('[room] socket connected', socket.id));
     socket.on('connect_error', (err) => {
       console.error('[room] socket connect_error:', err.message);
       socketError = `Connection error: ${err.message}`;
+    });
+
+    socket.on('room-error', ({ code, message }: { code: string; message: string }) => {
+      console.warn('[room] room-error:', code, message);
+      socketError = message;
+      if (code === 'ROOM_EXPIRED') {
+        setTimeout(() => setRoom(null), 3000);
+      }
     });
 
     socket.on('room-joined', ({ peers }: { roomId: string; peers: { id: string; displayName: string }[] }) => {
@@ -61,9 +68,9 @@
       }
     });
 
-    socket.on('peer-joined', ({ id, displayName }: { id: string; displayName: string }) => {
-      console.log('[room] peer-joined:', displayName, id);
-      addPeer({ id, stream: null, displayName, muted: false });
+    socket.on('peer-joined', ({ id, displayName: peerName }: { id: string; displayName: string }) => {
+      console.log('[room] peer-joined:', peerName, id);
+      addPeer({ id, stream: null, displayName: peerName, muted: false });
       peerManager.addPeer(id, false);
     });
 
@@ -92,7 +99,6 @@
       if (!chatOpen) unreadCount += 1;
     });
 
-    // Get media then join — ensures peerManager has tracks before the offer is sent
     async function initAndJoin() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -109,6 +115,7 @@
       if (socket.connected) {
         socket.emit('join-room', room.id);
       } else {
+        socket.auth = { displayName };
         socket.once('connect', () => {
           if (room) socket.emit('join-room', room.id);
         });
@@ -125,6 +132,7 @@
     }
     socket.off('connect');
     socket.off('connect_error');
+    socket.off('room-error');
     socket.off('room-joined');
     socket.off('peer-joined');
     socket.off('peer-left');
@@ -178,7 +186,7 @@
   <div class="flex min-h-0 flex-1">
     <div class="flex-1 overflow-hidden">
       {#if room}
-        <VideoGrid {localStream} localName={user?.displayName ?? 'You'} peers={room.peers} />
+        <VideoGrid {localStream} localName={displayName} peers={room.peers} />
       {/if}
     </div>
 
